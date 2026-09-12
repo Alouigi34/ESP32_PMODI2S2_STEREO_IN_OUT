@@ -1,11 +1,219 @@
-ESP-IDF template app
-====================
+# ESP32 Pmod I2S2 Stereo DSP
 
-This is a template application to be used with [Espressif IoT Development Framework](https://github.com/espressif/esp-idf).
+Real-time stereo audio processing on an **ESP32-WROOM-32** using the
+**Digilent Pmod I2S2** audio ADC/DAC module.
 
-Please check [ESP-IDF docs](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html) for getting started instructions.
+The firmware receives stereo line-level audio from the Pmod ADC, applies an
+independent second-order Butterworth low-pass filter to the left and right
+channels, and sends the filtered samples to the Pmod DAC.
 
-*Code in this repository is in the Public Domain (or CC0 licensed, at your option.)
-Unless required by applicable law or agreed to in writing, this
-software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied.*
+## Features
+
+- Stereo input and stereo output
+- Independent left and right channel processing
+- 48 kHz sample rate
+- 24-bit Pmod audio transported in 32-bit I2S slots
+- Second-order Butterworth low-pass filter
+- Cutoff frequency selected at compile time
+- ESP-IDF standard-mode full-duplex I2S driver
+- C++17 (`-std=gnu++17`)
+
+## Signal flow
+
+```mermaid
+flowchart LR
+    IN["Pmod LINE IN"] --> ADC["Stereo ADC"]
+    ADC --> DSP["ESP32 low-pass filters"]
+    DSP --> DAC["Stereo DAC"]
+    DAC --> OUT["Pmod LINE OUT"]
+```
+
+The channels are preserved independently:
+
+```text
+Left input  -> left low-pass filter  -> left output
+Right input -> right low-pass filter -> right output
+```
+
+## Hardware
+
+- ESP32-WROOM-32 development board
+- Digilent Pmod I2S2
+- 3.3 V power supply from the ESP32 board
+- Stereo line-level audio source or microphone preamplifier
+- Powered speakers or an external audio amplifier
+- Jumper wires
+
+> [!IMPORTANT]
+> The Pmod I2S2 input is a **line-level input**, not a microphone preamplifier.
+> A passive, dynamic, or electret microphone normally requires a suitable
+> preamplifier. The Pmod line output should feed powered speakers or an audio
+> amplifier, not a passive loudspeaker.
+
+## Wiring
+
+Disconnect power before changing the wiring. Set the Pmod I2S2 `JP1` jumper to
+`SLV`, making the ESP32 the I2S clock master.
+
+| Pmod pin | ESP32 pin | Signal | Direction |
+|---:|---:|---|---|
+| 1 | GPIO0 | DAC MCLK | ESP32 to Pmod |
+| 2 | GPIO18 | DAC LRCK/WS | ESP32 to Pmod |
+| 3 | GPIO5 | DAC SCLK/BCLK | ESP32 to Pmod |
+| 4 | GPIO19 | DAC SDIN | ESP32 to Pmod |
+| 5 | GND | Ground | Power |
+| 6 | 3.3 V | VCC | Power |
+| 7 | GPIO0 | ADC MCLK | ESP32 to Pmod |
+| 8 | GPIO18 | ADC LRCK/WS | ESP32 to Pmod |
+| 9 | GPIO5 | ADC SCLK/BCLK | ESP32 to Pmod |
+| 10 | GPIO17 | ADC SDOUT | Pmod to ESP32 |
+| 11 | GND | Ground | Power |
+| 12 | 3.3 V | VCC | Power |
+
+Pmod pins 1 and 7 share GPIO0, pins 2 and 8 share GPIO18, and pins 3 and 9
+share GPIO5.
+
+GPIO0 and GPIO5 are ESP32 strapping pins. The Pmod clock inputs are normally
+high-impedance, but incorrect wiring can interfere with startup or flashing.
+If the ESP32 remains in download mode, check these connections, release the
+BOOT button, and reset the board.
+
+## Software requirements
+
+- ESP-IDF 6.1
+- Git
+- CMake and Ninja supplied by the ESP-IDF installation
+- A C++17-capable ESP-IDF toolchain
+
+The project explicitly selects C++17 in `main/CMakeLists.txt`:
+
+```cmake
+target_compile_options(
+    ${COMPONENT_LIB}
+    PRIVATE
+    -std=gnu++17
+)
+```
+
+`__cplusplus` should report `201703` when the project is compiled as C++17.
+
+## Selecting the low-pass cutoff
+
+Open `main/main.cpp` and change:
+
+```cpp
+constexpr float CUTOFF_HZ = 3000.0f;
+```
+
+For example:
+
+```cpp
+constexpr float CUTOFF_HZ = 1000.0f;
+```
+
+The cutoff must be greater than 0 Hz and lower than the 24 kHz Nyquist
+frequency. At the selected cutoff, the Butterworth response is approximately
+-3 dB. Above the cutoff, this second-order filter rolls off at approximately
+12 dB per octave.
+
+Changing `CUTOFF_HZ` requires rebuilding and reflashing the firmware.
+
+## Build and flash
+
+Open an activated ESP-IDF terminal and clone the repository:
+
+```powershell
+git clone https://github.com/Alouigi34/ESP32_PMODI2S2_STEREO_IN_OUT.git
+cd ESP32_PMODI2S2_STEREO_IN_OUT
+```
+
+Select the original ESP32 target and build:
+
+```powershell
+idf.py set-target esp32
+idf.py build
+```
+
+Connect the board and determine its serial port. On Windows PowerShell:
+
+```powershell
+[System.IO.Ports.SerialPort]::GetPortNames()
+```
+
+Flash and monitor the board, replacing `COM5` if necessary:
+
+```powershell
+idf.py -p COM5 flash monitor
+```
+
+Exit the serial monitor with `Ctrl+]`.
+
+If flashing remains at `Connecting...`, hold **BOOT**, press and release
+**EN/RESET**, and release **BOOT** when writing begins.
+
+## Expected startup output
+
+```text
+I2S_LOWPASS: Initializing filtered passthrough
+I2S_LOWPASS: C++ value: 201703
+I2S_LOWPASS: Sample rate: 48000 Hz
+I2S_LOWPASS: Low-pass cutoff: 3000.0 Hz
+```
+
+The ESP-IDF driver may report that the RX channel is switched to slave for
+full-duplex operation. This is expected: the paired RX channel shares the
+clocks generated by the TX channel.
+
+## Testing
+
+1. Start with the amplifier or powered-speaker volume low.
+2. Play music or a test tone from a phone or computer into Pmod `LINE IN`.
+3. Connect Pmod `LINE OUT` to powered speakers or an amplifier.
+4. Confirm that the left input reaches the left output and the right input
+   reaches the right output.
+5. Lower `CUTOFF_HZ`, rebuild, and verify that high-frequency content becomes
+   progressively quieter.
+
+## Troubleshooting
+
+### Firmware starts but there is no sound
+
+- Confirm that `JP1` is set to `SLV`.
+- Confirm that the source is connected to `LINE IN` and the amplifier to
+  `LINE OUT`.
+- Verify the GPIO mapping and the shared clock connections.
+- Measure approximately 3.3 V between Pmod VCC and GND.
+- Test the speaker, amplifier, and audio cable with another source.
+- Use a line-level source before diagnosing a raw microphone connection.
+
+### Generated test tone works but passthrough is silent
+
+The DAC, output wiring, and clocks are operating. Check the ADC data connection
+from Pmod pin 10 to GPIO17 and ensure the input source supplies a line-level
+signal.
+
+### Flash-size warning
+
+If ESP-IDF detects 4 MB of physical flash while the firmware header specifies
+2 MB, select the correct 4 MB flash size in the ESP-IDF project configuration.
+This warning is independent of the audio processing path.
+
+## Project structure
+
+```text
+.
+|-- CMakeLists.txt
+|-- README.md
+|-- sdkconfig
+`-- main
+    |-- CMakeLists.txt
+    |-- Kconfig.projbuild
+    `-- main.cpp
+```
+
+The generated `build/` directory is intentionally excluded from Git and can be
+recreated with `idf.py build`.
+
+## License
+
+See [LICENSE](LICENSE).
