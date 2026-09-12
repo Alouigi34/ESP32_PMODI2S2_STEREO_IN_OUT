@@ -1,0 +1,13 @@
+/build/
+/managed_components/
+
+sdkconfig.old
+
+.settings/
+.project
+.cproject
+
+.vscode/
+.idea/
+
+*.log
